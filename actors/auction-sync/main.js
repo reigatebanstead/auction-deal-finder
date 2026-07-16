@@ -115,8 +115,10 @@ try {
         `Successfully imported ${rows.length} lots.`,
     );
 } catch (error) {
-    console.error(error);
+    console.error('IMPORT FAILED:', error);
+    await Actor.setValue('ERROR', {
+        message: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : null,
+    });
     throw error;
-} finally {
-    await Actor.exit();
 }
