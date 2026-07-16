@@ -2,6 +2,9 @@
   "name": "auction-sync",
   "version": "1.0.0",
   "type": "module",
+  "scripts": {
+    "start": "node main.js"
+  },
   "dependencies": {
     "apify": "^3.4.0"
   }
