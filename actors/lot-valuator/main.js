@@ -1,7 +1,7 @@
 import { Actor } from 'apify';
-import OpenAI from 'openai';
 import { fetchGeminiSoldComparables } from './gemini-comparables.js';
 import { runGeminiTestMode } from './gemini-test-mode.js';
+import { generateGeminiValuation } from './gemini-valuation.js';
 
 await Actor.init();
 
@@ -19,7 +19,7 @@ async function main() {
 
     const supabaseUrl = process.env.SUPABASE_URL;
     const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-    const openaiApiKey = process.env.OPENAI_API_KEY;
+    const geminiApiKey = process.env.GEMINI_API_KEY;
     const batchSize = input.batchSize ?? 10;
 
     if (!supabaseUrl) {
@@ -30,15 +30,10 @@ async function main() {
         throw new Error('SUPABASE_SERVICE_ROLE_KEY is missing.');
     }
 
-    if (!openaiApiKey) {
-        throw new Error('OPENAI_API_KEY is missing.');
+    if (!geminiApiKey) {
+        throw new Error('GEMINI_API_KEY is missing.');
     }
 
-    const client = new OpenAI({
-        apiKey: openaiApiKey,
-    });
-
-    // Fetch pending lots from Supabase
     console.log(`Fetching up to ${batchSize} pending lots from Supabase...`);
     const pendingLotsUrl = new URL(`${supabaseUrl.replace(/\/$/, '')}/rest/v1/lots`);
     pendingLotsUrl.searchParams.append('valuation_status', 'eq.pending');
@@ -67,6 +62,7 @@ async function main() {
             valuationsProcessed: 0,
             failuresProcessed: 0,
             totalProcessed: 0,
+            provider: 'gemini',
             completedAt: new Date().toISOString(),
         });
         console.log('No pending lots to valuate.');
@@ -76,67 +72,15 @@ async function main() {
     const results = [];
 
     for (const lot of lots) {
-        console.log(`Processing lot: ${lot.id} - ${lot.title}`);
-
-        const prompt = `You are an expert art and antique auctioneer. Analyze the following auction lot and provide a valuation.
-
-Lot Details:
-- Title: ${lot.title}
-- Auction House: ${lot.auction_house}
-- Current Bid: £${lot.current_bid ?? 'N/A'}
-- Starting Price: £${lot.start_price ?? 'N/A'}
-- Description: ${lot.description ?? 'N/A'}
-- Condition Report: ${lot.condition_report ?? 'N/A'}
-
-Provide your analysis in the following JSON format:
-{
-  "expectedResaleValue": <number in GBP>,
-  "maximumHammerPrice": <number in GBP>,
-  "expectedProfit": <number in GBP>,
-  "confidence": "High" | "Medium" | "Low",
-  "reasoning": "<brief explanation of valuation>",
-  "conditionRisks": ["<risk 1>", "<risk 2>", "None identified"]
-}
-
-Be realistic and conservative in your estimates. Only return valid JSON.`;
+        console.log(`Processing lot with Gemini: ${lot.id} - ${lot.title}`);
 
         try {
-            const completion = await client.chat.completions.create({
-                model: 'gpt-4o-mini',
-                messages: [
-                    {
-                        role: 'user',
-                        content: prompt,
-                    },
-                ],
-                temperature: 0.7,
-                response_format: { type: 'json_object' },
+            const valuation = await generateGeminiValuation(lot, {
+                apiKey: geminiApiKey,
+                timeoutMs: input.valuationTimeoutMs ?? 60_000,
             });
 
-            const responseText = completion.choices[0].message.content.trim();
-            const valuation = JSON.parse(responseText);
-
-            // Validate required fields
-            const requiredFields = [
-                'expectedResaleValue',
-                'maximumHammerPrice',
-                'expectedProfit',
-                'confidence',
-                'reasoning',
-                'conditionRisks',
-            ];
-            for (const field of requiredFields) {
-                if (!(field in valuation)) {
-                    throw new Error(`Missing field in valuation: ${field}`);
-                }
-            }
-
-            // Ensure conditionRisks is an array
-            if (!Array.isArray(valuation.conditionRisks)) {
-                throw new Error('conditionRisks must be an array');
-            }
-
-            console.log(`✓ Valuation for lot ${lot.id}:`, valuation);
+            console.log(`✓ Gemini valuation for lot ${lot.id}:`, valuation);
 
             results.push({
                 success: true,
@@ -152,7 +96,7 @@ Be realistic and conservative in your estimates. Only return valid JSON.`;
             });
         } catch (error) {
             const errorMessage = error instanceof Error ? error.message : String(error);
-            console.error(`✗ Failed to valuate lot ${lot.id}:`, errorMessage);
+            console.error(`✗ Failed to valuate lot ${lot.id} with Gemini:`, errorMessage);
             results.push({
                 success: false,
                 id: lot.id,
@@ -162,7 +106,6 @@ Be realistic and conservative in your estimates. Only return valid JSON.`;
         }
     }
 
-    // Update lots in Supabase
     if (results.length > 0) {
         console.log(`\nUpdating ${results.length} lots in Supabase...`);
 
@@ -170,7 +113,6 @@ Be realistic and conservative in your estimates. Only return valid JSON.`;
             const updateUrl = new URL(`${supabaseUrl.replace(/\/$/, '')}/rest/v1/lots`);
             updateUrl.searchParams.append('id', `eq.${result.id}`);
 
-            // Prepare update payload based on success/failure
             let updatePayload;
             if (result.success) {
                 updatePayload = {
@@ -213,18 +155,19 @@ Be realistic and conservative in your estimates. Only return valid JSON.`;
         }
     }
 
-    const successCount = results.filter((r) => r.success).length;
+    const successCount = results.filter((result) => result.success).length;
     const failureCount = results.length - successCount;
 
     await Actor.setValue('OUTPUT', {
         valuationsProcessed: successCount,
         failuresProcessed: failureCount,
         totalProcessed: results.length,
+        provider: 'gemini',
         completedAt: new Date().toISOString(),
     });
 
     console.log(
-        `\nSuccessfully valuated ${successCount} lots with ${failureCount} failures.`,
+        `\nSuccessfully valuated ${successCount} lots with Gemini, with ${failureCount} failures.`,
     );
 }
 
