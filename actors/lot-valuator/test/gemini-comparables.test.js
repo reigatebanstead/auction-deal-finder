@@ -3,8 +3,10 @@ import assert from 'node:assert/strict';
 
 import {
     fetchGeminiSoldComparables,
+    normalizeActiveListing,
     normalizeComparable,
     summarizeComparableEvidence,
+    summarizeMarketEvidence,
 } from '../gemini-comparables.js';
 
 test('normalizes a valid GBP eBay sold comparable', () => {
@@ -31,6 +33,18 @@ test('normalizes a valid GBP eBay sold comparable', () => {
     );
 });
 
+test('normalizes a valid active listing', () => {
+    assert.equal(
+        normalizeActiveListing({
+            title: 'Active example',
+            askingPrice: '£149.99',
+            currency: 'GBP',
+            url: 'https://www.ebay.co.uk/itm/456',
+        }).askingPrice,
+        149.99,
+    );
+});
+
 test('rejects unsupported currencies and non-eBay URLs', () => {
     assert.equal(
         normalizeComparable({
@@ -42,8 +56,8 @@ test('rejects unsupported currencies and non-eBay URLs', () => {
     );
 
     assert.equal(
-        normalizeComparable({
-            soldPrice: 100,
+        normalizeActiveListing({
+            askingPrice: 100,
             currency: 'GBP',
             url: 'https://example.com/item/123',
         }),
@@ -51,7 +65,7 @@ test('rejects unsupported currencies and non-eBay URLs', () => {
     );
 });
 
-test('deduplicates and calculates evidence statistics', () => {
+test('deduplicates and calculates sold price statistics', () => {
     const evidence = summarizeComparableEvidence('test item', [
         {
             title: 'A',
@@ -83,7 +97,33 @@ test('deduplicates and calculates evidence statistics', () => {
     assert.equal(evidence.averagePrice, 150);
 });
 
-test('fetches grounded Gemini evidence with an injected fetch implementation', async () => {
+test('calculates sell-through proxy and liquidity', () => {
+    const sold = Array.from({ length: 8 }, (_, index) => ({
+        title: `Sold ${index}`,
+        soldPrice: 100 + index,
+        currency: 'GBP',
+        url: `https://www.ebay.co.uk/itm/sold-${index}`,
+        confidence: 'High',
+    }));
+    const active = Array.from({ length: 2 }, (_, index) => ({
+        title: `Active ${index}`,
+        askingPrice: 150 + index,
+        currency: 'GBP',
+        url: `https://www.ebay.co.uk/itm/active-${index}`,
+        confidence: 'High',
+    }));
+
+    const evidence = summarizeMarketEvidence('test item', sold, active);
+
+    assert.equal(evidence.soldCount, 8);
+    assert.equal(evidence.activeCount, 2);
+    assert.equal(evidence.sellThroughRate, 80);
+    assert.equal(evidence.marketLiquidity, 'High');
+    assert.equal(evidence.soldPriceSummary.medianPrice, 103.5);
+    assert.equal(evidence.activePriceSummary.medianPrice, 150.5);
+});
+
+test('fetches grounded Gemini market evidence with an injected fetch implementation', async () => {
     const fakeFetch = async (_url, options) => {
         const body = JSON.parse(options.body);
         assert.deepEqual(body.tools, [{ google_search: {} }]);
@@ -98,7 +138,7 @@ test('fetches grounded Gemini evidence with an injected fetch implementation', a
                                 parts: [
                                     {
                                         text: JSON.stringify({
-                                            comparables: [
+                                            soldComparables: [
                                                 {
                                                     title: 'Sold example',
                                                     soldPrice: 175,
@@ -106,6 +146,16 @@ test('fetches grounded Gemini evidence with an injected fetch implementation', a
                                                     soldDate: null,
                                                     condition: 'Used',
                                                     url: 'https://www.ebay.co.uk/itm/999',
+                                                    confidence: 'Medium',
+                                                },
+                                            ],
+                                            activeListings: [
+                                                {
+                                                    title: 'Active example',
+                                                    askingPrice: 225,
+                                                    currency: 'GBP',
+                                                    condition: 'Used',
+                                                    url: 'https://www.ebay.co.uk/itm/1000',
                                                     confidence: 'Medium',
                                                 },
                                             ],
@@ -137,7 +187,9 @@ test('fetches grounded Gemini evidence with an injected fetch implementation', a
         fetchImpl: fakeFetch,
     });
 
-    assert.equal(evidence.resultCount, 1);
-    assert.equal(evidence.comparables[0].soldPrice, 175);
+    assert.equal(evidence.soldCount, 1);
+    assert.equal(evidence.activeCount, 1);
+    assert.equal(evidence.sellThroughRate, 50);
+    assert.equal(evidence.soldComparables[0].soldPrice, 175);
     assert.deepEqual(evidence.searchQueries, ['sold example ebay']);
 });
