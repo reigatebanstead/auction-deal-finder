@@ -6,11 +6,20 @@ on:
       - main
     paths:
       - 'actors/lot-valuator/**'
+      - '.github/workflows/deploy-lot-valuator.yml'
   workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-lot-valuator
+  cancel-in-progress: false
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: actors/lot-valuator
@@ -24,24 +33,23 @@ jobs:
         with:
           node-version: '20'
 
+      - name: Install dependencies
+        run: npm install
+
+      - name: Run tests
+        run: npm test
+
       - name: Install Apify CLI
         run: npm install -g apify-cli
 
-      # ── Authenticate ────────────────────────────────────────────────────────
-      # apify push reads credentials from ~/.apify/auth.json, not from the
-      # APIFY_TOKEN env var alone.  Calling `apify login --token` explicitly
-      # writes that file so every subsequent CLI command is authenticated.
       - name: Login to Apify
         run: apify login --token "$APIFY_TOKEN"
         env:
           APIFY_TOKEN: ${{ secrets.APIFY_TOKEN }}
 
-      # ── Diagnostic: confirm authentication before deploying ─────────────────
-      # This step fails if the token is invalid or not available.
-      # It prints the username, NOT the token.
       - name: Verify Apify authentication
         run: |
-          APIFY_USER=$(curl -sf \
+          APIFY_USER=$(curl --silent --show-error --fail \
             -H "Authorization: Bearer $APIFY_TOKEN" \
             "https://api.apify.com/v2/users/me" | jq -r '.data.username')
           if [ -z "$APIFY_USER" ] || [ "$APIFY_USER" = "null" ]; then
@@ -52,16 +60,12 @@ jobs:
         env:
           APIFY_TOKEN: ${{ secrets.APIFY_TOKEN }}
 
-      # ── Deploy ──────────────────────────────────────────────────────────────
       - name: Deploy to Apify
         run: apify push valorous_ocarina/auction-deal-finder
         env:
           APIFY_TOKEN: ${{ secrets.APIFY_TOKEN }}
 
-      # ── Post-deployment: verify input schema ────────────────────────────────
       - name: Verify deployed input schema
-        env:
-          APIFY_TOKEN: ${{ secrets.APIFY_TOKEN }}
         run: |
           echo "Checking deployed input schema for required fields..."
           SCHEMA=".actor/INPUT_SCHEMA.json"
@@ -72,63 +76,24 @@ jobs:
               exit 1
             fi
           done
-          echo "Input schema OK — batchSize, testGeminiComparables, comparableQuery, comparableLimit all present."
+          echo "Input schema OK."
 
-      # ── Smoke test ──────────────────────────────────────────────────────────
-      - name: Smoke test
+      - name: Smoke test Gemini comparables mode
+        env:
+          APIFY_TOKEN: ${{ secrets.APIFY_TOKEN }}
         run: |
-          echo "Starting smoke-test run..."
+          echo "Starting synchronous smoke-test run..."
 
-          # Start the run.  Use waitForFinish=60 so the request returns quickly
-          # if the actor finishes fast; if it is still queued or running we will
-          # poll below.  The token is passed as an Authorization header so it is
-          # never written to the console or the URL.
-          curl -s -f \
+          # The documented synchronous endpoint passes this JSON body directly as
+          # the Actor INPUT and returns the default dataset items. This avoids the
+          # previous incorrect run-status polling URL and proves test mode was used.
+          curl --silent --show-error --fail-with-body \
+            --max-time 240 \
             -X POST \
             -H "Authorization: Bearer $APIFY_TOKEN" \
             -H "Content-Type: application/json" \
             -d '{"testGeminiComparables":true,"comparableQuery":"Royal Doulton stoneware vase signed 1920s","comparableLimit":10}' \
-            "https://api.apify.com/v2/acts/valorous_ocarina~auction-deal-finder/runs?waitForFinish=60" \
-            -o /tmp/run-response.json
-
-          RUN_ID=$(jq -r '.data.id'     /tmp/run-response.json)
-          STATUS=$(jq -r '.data.status' /tmp/run-response.json)
-          echo "Run $RUN_ID initial status: $STATUS"
-
-          # Poll until the run reaches a terminal state (up to 10 minutes).
-          POLL_INTERVAL=15
-          MAX_WAIT=600
-          ELAPSED=0
-          while [ "$STATUS" != "SUCCEEDED" ] && \
-                [ "$STATUS" != "FAILED"    ] && \
-                [ "$STATUS" != "ABORTED"   ] && \
-                [ "$STATUS" != "TIMED-OUT" ]; do
-            if [ "$ELAPSED" -ge "$MAX_WAIT" ]; then
-              echo "::error::Smoke test timed out after ${MAX_WAIT}s — last status: $STATUS"
-              exit 1
-            fi
-            echo "  status: $STATUS — waiting ${POLL_INTERVAL}s (elapsed: ${ELAPSED}s)..."
-            sleep "$POLL_INTERVAL"
-            ELAPSED=$((ELAPSED + POLL_INTERVAL))
-            curl -s -f \
-              -H "Authorization: Bearer $APIFY_TOKEN" \
-              "https://api.apify.com/v2/acts/valorous_ocarina~auction-deal-finder/runs/$RUN_ID" \
-              -o /tmp/run-response.json
-            STATUS=$(jq -r '.data.status' /tmp/run-response.json)
-          done
-
-          DATASET_ID=$(jq -r '.data.defaultDatasetId' /tmp/run-response.json)
-          echo "Run $RUN_ID finished with status: $STATUS"
-
-          if [ "$STATUS" != "SUCCEEDED" ]; then
-            echo "::error::Smoke test run did not succeed — status: $STATUS"
-            exit 1
-          fi
-
-          # Fetch dataset items
-          curl -s -f \
-            -H "Authorization: Bearer $APIFY_TOKEN" \
-            "https://api.apify.com/v2/datasets/$DATASET_ID/items" \
+            "https://api.apify.com/v2/actors/valorous_ocarina~auction-deal-finder/run-sync-get-dataset-items?timeout=180&format=json&clean=true" \
             -o /tmp/smoke-items.json
 
           ITEM_COUNT=$(jq 'length' /tmp/smoke-items.json)
@@ -136,25 +101,23 @@ jobs:
 
           if [ "$ITEM_COUNT" != "1" ]; then
             echo "::error::Expected exactly 1 dataset item, got $ITEM_COUNT"
+            cat /tmp/smoke-items.json
             exit 1
           fi
 
-          # Verify required fields are present in the result
           for FIELD in soldCount activeCount sellThroughRate liquidityAssessment soldListings activeListings errors; do
             HAS=$(jq --arg f "$FIELD" '.[0] | has($f)' /tmp/smoke-items.json)
             if [ "$HAS" != "true" ]; then
               echo "::error::Smoke test result is missing required field: $FIELD"
+              cat /tmp/smoke-items.json
               exit 1
             fi
           done
 
-          # Verify errors is an array
           ERRORS_TYPE=$(jq -r '.[0].errors | type' /tmp/smoke-items.json)
           if [ "$ERRORS_TYPE" != "array" ]; then
             echo "::error::Field 'errors' must be an array, got: $ERRORS_TYPE"
             exit 1
           fi
 
-          echo "Smoke test passed — all required fields present and errors is an array."
-        env:
-          APIFY_TOKEN: ${{ secrets.APIFY_TOKEN }}
+          echo "Smoke test passed."
