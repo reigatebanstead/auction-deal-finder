@@ -15,19 +15,38 @@ try {
             );
         }
 
-        const evidence = await fetchGeminiSoldComparables({
-            query,
-            limit: input.comparableLimit ?? 10,
-        });
+        const errors = [];
+        let evidence;
+        try {
+            evidence = await fetchGeminiSoldComparables({
+                query,
+                limit: input.comparableLimit ?? 10,
+                timeoutMs: 60_000,
+            });
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            console.error('Gemini comparable search failed:', message);
+            errors.push(message);
+        }
 
-        await Actor.setValue('OUTPUT', {
+        const result = {
             mode: 'gemini-ebay-sold-comparables-test',
-            ...evidence,
+            query,
+            soldCount: evidence?.soldCount ?? 0,
+            activeCount: evidence?.activeCount ?? 0,
+            sellThroughRate: evidence?.sellThroughRate ?? null,
+            liquidityAssessment: evidence?.marketLiquidity ?? 'Unknown',
+            soldListings: evidence?.soldComparables ?? [],
+            activeListings: evidence?.activeListings ?? [],
+            errors,
             completedAt: new Date().toISOString(),
-        });
+        };
+
+        await Actor.pushData(result);
+        await Actor.setValue('OUTPUT', result);
 
         console.log(
-            `Found ${evidence.resultCount} normalized sold comparables for "${query}".`,
+            `Found ${result.soldCount} sold and ${result.activeCount} active listings for "${query}".`,
         );
         await Actor.exit();
     }

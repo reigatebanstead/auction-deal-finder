@@ -230,6 +230,7 @@ export async function fetchGeminiSoldComparables({
     model = process.env.GEMINI_MODEL ?? DEFAULT_MODEL,
     endpoint = DEFAULT_ENDPOINT,
     fetchImpl = fetch,
+    timeoutMs = 120_000,
 }) {
     if (!query?.trim()) throw new Error('A non-empty comparable query is required.');
     if (!apiKey) throw new Error('GEMINI_API_KEY is missing.');
@@ -244,9 +245,11 @@ export async function fetchGeminiSoldComparables({
     }
 
     const url = `${endpoint.replace(/\/$/, '')}/models/${encodeURIComponent(model)}:generateContent`;
+    const signal = AbortSignal.timeout(timeoutMs);
     const response = await fetchImpl(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
+        signal,
         body: JSON.stringify({
             contents: [{
                 role: 'user',
@@ -259,6 +262,7 @@ export async function fetchGeminiSoldComparables({
 
     if (!response.ok) {
         const errorText = await response.text();
+        console.error(`Gemini API error (${response.status}):`, errorText.slice(0, 500));
         throw new Error(`Gemini comparable search failed (${response.status}): ${errorText}`);
     }
 
