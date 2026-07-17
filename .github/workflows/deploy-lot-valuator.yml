@@ -1,0 +1,32 @@
+name: Deploy lot-valuator to Apify
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'actors/lot-valuator/**'
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: actors/lot-valuator
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Apify CLI
+        run: npm install -g apify-cli
+
+      - name: Deploy to Apify
+        run: apify push --no-prompt
+        env:
+          APIFY_TOKEN: ${{ secrets.APIFY_TOKEN }}
