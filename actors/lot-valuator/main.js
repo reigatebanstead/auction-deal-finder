@@ -106,6 +106,9 @@ async function main() {
         }
     }
 
+    let updatesSucceeded = 0;
+    let updatesFailed = 0;
+
     if (results.length > 0) {
         console.log(`\nUpdating ${results.length} lots in Supabase...`);
 
@@ -139,35 +142,55 @@ async function main() {
                     apikey: supabaseKey,
                     Authorization: `Bearer ${supabaseKey}`,
                     'Content-Type': 'application/json',
-                    Prefer: 'return=minimal',
+                    Prefer: 'return=representation',
                 },
                 body: JSON.stringify(updatePayload),
             });
 
             if (!updateResponse.ok) {
                 const errorText = await updateResponse.text();
+                updatesFailed += 1;
                 console.error(
                     `Failed to update lot ${result.id} (${updateResponse.status}): ${errorText}`,
                 );
-            } else {
-                console.log(`✓ Updated lot ${result.id}`);
+                continue;
             }
+
+            const updatedRows = await updateResponse.json();
+            if (!Array.isArray(updatedRows) || updatedRows.length !== 1) {
+                updatesFailed += 1;
+                console.error(
+                    `Failed to verify update for lot ${result.id}: expected 1 updated row, received ${Array.isArray(updatedRows) ? updatedRows.length : 'an invalid response'}. Check that SUPABASE_SERVICE_ROLE_KEY is the service-role secret and that RLS permits the update.`,
+                );
+                continue;
+            }
+
+            updatesSucceeded += 1;
+            console.log(`✓ Updated and verified lot ${result.id}`);
         }
     }
 
-    const successCount = results.filter((result) => result.success).length;
-    const failureCount = results.length - successCount;
+    const valuationSuccessCount = results.filter((result) => result.success).length;
+    const valuationFailureCount = results.length - valuationSuccessCount;
 
     await Actor.setValue('OUTPUT', {
-        valuationsProcessed: successCount,
-        failuresProcessed: failureCount,
+        valuationsProcessed: valuationSuccessCount,
+        failuresProcessed: valuationFailureCount,
         totalProcessed: results.length,
+        updatesSucceeded,
+        updatesFailed,
         provider: 'gemini',
         completedAt: new Date().toISOString(),
     });
 
+    if (updatesFailed > 0) {
+        throw new Error(
+            `Supabase update verification failed for ${updatesFailed} of ${results.length} lots.`,
+        );
+    }
+
     console.log(
-        `\nSuccessfully valuated ${successCount} lots with Gemini, with ${failureCount} failures.`,
+        `\nSuccessfully valuated and persisted ${valuationSuccessCount} lots with Gemini, with ${valuationFailureCount} valuation failures.`,
     );
 }
 
