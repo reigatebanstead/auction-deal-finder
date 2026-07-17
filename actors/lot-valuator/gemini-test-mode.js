@@ -61,9 +61,11 @@ export async function runGeminiTestMode(input, {
             const evidence = await fetchComparables({
                 query,
                 limit: input.comparableLimit ?? 10,
-                // Use a conservative 60 s timeout so the Actor exits well within
-                // Apify's 300 s run limit even if the Gemini API is slow.
-                timeoutMs: 60_000,
+                // Allow up to 180 s for gemini-2.5-flash + google_search to respond.
+                // The AbortController-based timeout in fetchGeminiSoldComparables
+                // guarantees the whole HTTP round-trip (headers + body) is bounded,
+                // so the Actor exits well within Apify's 300 s run limit.
+                timeoutMs: 180_000,
             });
             result = buildSuccessResult(query, evidence);
             console.log(

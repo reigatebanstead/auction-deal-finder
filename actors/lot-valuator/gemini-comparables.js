@@ -246,14 +246,36 @@ export async function fetchGeminiSoldComparables({
     }
 
     const url = `${endpoint.replace(/\/$/, '')}/models/${encodeURIComponent(model)}:generateContent`;
-    const signal = AbortSignal.timeout(timeoutMs);
+
+    // Use AbortController + explicit setTimeout rather than AbortSignal.timeout().
+    // AbortSignal.timeout() uses an unref'd timer and, in some Node.js 20 / undici
+    // configurations, does not reliably cancel the response-body-reading phase of a
+    // fetch() call.  An explicit ref'd timer + Promise.race guarantees that the
+    // entire HTTP round-trip (headers + body) is bounded by timeoutMs.
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => {
+        controller.abort(new DOMException('The operation timed out.', 'TimeoutError'));
+    }, timeoutMs);
+
+    // Helper that rejects as soon as the abort signal fires (or immediately if it
+    // has already fired).  Used to race against response.json() below.
+    // The .catch() suppresses an unhandled-rejection warning in the case where
+    // the fetch phase itself throws before abortRace is ever awaited.
+    const abortRace = new Promise((_, reject) => {
+        if (controller.signal.aborted) {
+            reject(controller.signal.reason);
+            return;
+        }
+        controller.signal.addEventListener('abort', () => reject(controller.signal.reason), { once: true });
+    });
+    abortRace.catch(() => {});
 
     let response;
     try {
         response = await fetchImpl(url, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
-            signal,
+            signal: controller.signal,
             body: JSON.stringify({
                 contents: [{
                     role: 'user',
@@ -264,17 +286,24 @@ export async function fetchGeminiSoldComparables({
             }),
         });
     } catch (fetchError) {
+        clearTimeout(timeoutId);
+        // Normalise AbortError → TimeoutError so callers always see a consistent
+        // error type when the timeout fires.
+        const err = (fetchError.name === 'AbortError' && controller.signal.aborted)
+            ? (controller.signal.reason ?? new DOMException('The operation timed out.', 'TimeoutError'))
+            : fetchError;
         console.error('Gemini request error:', {
             query: query.trim(),
             model,
             timeoutMs,
-            errorName: fetchError.name,
-            message: fetchError.message,
+            errorName: err.name,
+            message: err.message,
         });
-        throw fetchError;
+        throw err;
     }
 
     if (!response.ok) {
+        clearTimeout(timeoutId);
         const errorBody = await response.text();
         console.error('Gemini non-2xx response:', {
             query: query.trim(),
@@ -285,7 +314,29 @@ export async function fetchGeminiSoldComparables({
         throw new Error(`Gemini comparable search failed (${response.status}): ${errorBody.slice(0, MAX_ERROR_LOG_LENGTH)}`);
     }
 
-    const payload = await response.json();
+    // Race the body-read against the abort signal.  gemini-2.5-flash with
+    // google_search grounding streams the response body for up to several minutes;
+    // without this race the timeout has no effect once the HTTP 200 headers have
+    // been received.
+    let payload;
+    try {
+        payload = await Promise.race([response.json(), abortRace]);
+    } catch (bodyError) {
+        clearTimeout(timeoutId);
+        const err = (bodyError.name === 'AbortError' && controller.signal.aborted)
+            ? (controller.signal.reason ?? new DOMException('The operation timed out.', 'TimeoutError'))
+            : bodyError;
+        console.error('Gemini JSON parse error:', {
+            query: query.trim(),
+            model,
+            errorName: err.name,
+            message: err.message,
+        });
+        throw err;
+    }
+
+    clearTimeout(timeoutId);
+
     const responseText = extractResponseText(payload);
     if (!responseText) {
         console.error('Gemini returned no text:', { query: query.trim(), model });
