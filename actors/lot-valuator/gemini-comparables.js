@@ -1,5 +1,6 @@
 const DEFAULT_MODEL = 'gemini-2.5-flash';
 const DEFAULT_ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta';
+const MAX_ERROR_LOG_LENGTH = 500;
 
 function extractJson(text) {
     const trimmed = text.trim();
@@ -262,7 +263,7 @@ export async function fetchGeminiSoldComparables({
 
     if (!response.ok) {
         const errorText = await response.text();
-        console.error(`Gemini API error (${response.status}):`, errorText.slice(0, 500));
+        console.error(`Gemini API error (${response.status}):`, errorText.slice(0, MAX_ERROR_LOG_LENGTH));
         throw new Error(`Gemini comparable search failed (${response.status}): ${errorText}`);
     }
 
