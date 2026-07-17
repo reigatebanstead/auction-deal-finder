@@ -21,7 +21,8 @@
     "comparableQuery": {
       "title": "Comparable Search Query",
       "description": "Item description to search for in sold eBay evidence test mode.",
-      "type": "string"
+      "type": "string",
+      "editor": "textfield"
     },
     "comparableLimit": {
       "title": "Comparable Result Limit",

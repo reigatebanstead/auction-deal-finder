@@ -23,6 +23,7 @@ test('input schema exposes comparableQuery as a string field', () => {
     const field = schema.properties.comparableQuery;
     assert.ok(field, 'comparableQuery must exist in input schema');
     assert.equal(field.type, 'string');
+    assert.equal(field.editor, 'textfield');
 });
 
 test('input schema exposes comparableLimit as an integer field', () => {
@@ -31,4 +32,30 @@ test('input schema exposes comparableLimit as an integer field', () => {
     assert.equal(field.type, 'integer');
     assert.ok(field.minimum >= 1, 'comparableLimit minimum must be at least 1');
     assert.ok(field.maximum <= 25, 'comparableLimit maximum must not exceed 25');
+});
+
+test('all string properties define a supported Apify editor', () => {
+    const supportedEditors = new Set([
+        'textfield',
+        'textarea',
+        'javascript',
+        'json',
+        'select',
+        'hidden',
+        'requestListSources',
+        'proxy',
+        'query',
+        'datepicker',
+        'cron',
+        'resourcePicker',
+    ]);
+
+    for (const [name, definition] of Object.entries(schema.properties)) {
+        if (definition.type !== 'string') continue;
+        assert.ok(definition.editor, `${name}.editor is required for string fields`);
+        assert.ok(
+            supportedEditors.has(definition.editor),
+            `${name}.editor must be a supported Apify editor`,
+        );
+    }
 });
