@@ -79,21 +79,45 @@ jobs:
         run: |
           echo "Starting smoke-test run..."
 
-          # Start a run and wait up to 300 s for it to finish.
-          # The token is passed as an Authorization header so it is
+          # Start the run.  Use waitForFinish=60 so the request returns quickly
+          # if the actor finishes fast; if it is still queued or running we will
+          # poll below.  The token is passed as an Authorization header so it is
           # never written to the console or the URL.
           curl -s -f \
             -X POST \
             -H "Authorization: Bearer $APIFY_TOKEN" \
             -H "Content-Type: application/json" \
             -d '{"testGeminiComparables":true,"comparableQuery":"Royal Doulton stoneware vase signed 1920s","comparableLimit":10}' \
-            "https://api.apify.com/v2/acts/valorous_ocarina~auction-deal-finder/runs?waitForFinish=300" \
+            "https://api.apify.com/v2/acts/valorous_ocarina~auction-deal-finder/runs?waitForFinish=60" \
             -o /tmp/run-response.json
 
-          STATUS=$(jq -r '.data.status'               /tmp/run-response.json)
-          DATASET_ID=$(jq -r '.data.defaultDatasetId' /tmp/run-response.json)
-          RUN_ID=$(jq -r '.data.id'                   /tmp/run-response.json)
+          RUN_ID=$(jq -r '.data.id'     /tmp/run-response.json)
+          STATUS=$(jq -r '.data.status' /tmp/run-response.json)
+          echo "Run $RUN_ID initial status: $STATUS"
 
+          # Poll until the run reaches a terminal state (up to 10 minutes).
+          POLL_INTERVAL=15
+          MAX_WAIT=600
+          ELAPSED=0
+          while [ "$STATUS" != "SUCCEEDED" ] && \
+                [ "$STATUS" != "FAILED"    ] && \
+                [ "$STATUS" != "ABORTED"   ] && \
+                [ "$STATUS" != "TIMED-OUT" ]; do
+            if [ "$ELAPSED" -ge "$MAX_WAIT" ]; then
+              echo "::error::Smoke test timed out after ${MAX_WAIT}s — last status: $STATUS"
+              exit 1
+            fi
+            echo "  status: $STATUS — waiting ${POLL_INTERVAL}s (elapsed: ${ELAPSED}s)..."
+            sleep "$POLL_INTERVAL"
+            ELAPSED=$((ELAPSED + POLL_INTERVAL))
+            curl -s -f \
+              -H "Authorization: Bearer $APIFY_TOKEN" \
+              "https://api.apify.com/v2/acts/valorous_ocarina~auction-deal-finder/runs/$RUN_ID" \
+              -o /tmp/run-response.json
+            STATUS=$(jq -r '.data.status' /tmp/run-response.json)
+          done
+
+          DATASET_ID=$(jq -r '.data.defaultDatasetId' /tmp/run-response.json)
           echo "Run $RUN_ID finished with status: $STATUS"
 
           if [ "$STATUS" != "SUCCEEDED" ]; then
