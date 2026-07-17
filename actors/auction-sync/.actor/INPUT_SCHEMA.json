@@ -5,8 +5,8 @@
   "schemaVersion": 1,
   "properties": {
     "datasetId": {
-      "title": "Dataset ID",
-      "description": "The Apify dataset containing auction items to sync",
+      "title": "Source dataset",
+      "description": "Select the Apify dataset containing auction items to sync",
       "type": "string",
       "editor": "resourcePicker",
       "resourceType": "dataset",
