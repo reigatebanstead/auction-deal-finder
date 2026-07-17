@@ -21,13 +21,20 @@ const VALID_VALUATION = {
     conditionRisks: ['Surface wear'],
 };
 
-function responseWith(payload, { ok = true, status = 200, text = '' } = {}) {
+function responseWith(payload, { ok = true, status = 200, text = '', headers = {} } = {}) {
     return {
         ok,
         status,
+        headers: { get: (name) => headers[name.toLowerCase()] ?? null },
         json: async () => payload,
         text: async () => text,
     };
+}
+
+function validResponse() {
+    return responseWith({
+        candidates: [{ content: { parts: [{ text: JSON.stringify(VALID_VALUATION) }] } }],
+    });
 }
 
 test('calls Gemini generateContent with JSON schema and returns validated valuation', async () => {
@@ -40,9 +47,7 @@ test('calls Gemini generateContent with JSON schema and returns validated valuat
         fetchImpl: async (url, options) => {
             capturedUrl = url;
             capturedOptions = options;
-            return responseWith({
-                candidates: [{ content: { parts: [{ text: JSON.stringify(VALID_VALUATION) }] } }],
-            });
+            return validResponse();
         },
     });
 
@@ -61,18 +66,96 @@ test('requires GEMINI_API_KEY', async () => {
     );
 });
 
-test('includes Gemini error response details', async () => {
+test('retries a 429 using the delay from the response body', async () => {
+    let calls = 0;
+    const delays = [];
+    const retries = [];
+
+    const result = await generateGeminiValuation(LOT, {
+        apiKey: 'test-key',
+        fetchImpl: async () => {
+            calls += 1;
+            if (calls === 1) {
+                return responseWith({}, {
+                    ok: false,
+                    status: 429,
+                    text: 'Please retry in 2.5s.',
+                });
+            }
+            return validResponse();
+        },
+        sleepImpl: async (delayMs) => delays.push(delayMs),
+        onRetry: (retry) => retries.push(retry),
+    });
+
+    assert.equal(calls, 2);
+    assert.deepEqual(delays, [2500]);
+    assert.equal(retries[0].status, 429);
+    assert.deepEqual(result, VALID_VALUATION);
+});
+
+test('prefers Retry-After header for retry delay', async () => {
+    let calls = 0;
+    const delays = [];
+
+    await generateGeminiValuation(LOT, {
+        apiKey: 'test-key',
+        fetchImpl: async () => {
+            calls += 1;
+            return calls === 1
+                ? responseWith({}, {
+                    ok: false,
+                    status: 503,
+                    text: 'temporarily unavailable',
+                    headers: { 'retry-after': '4' },
+                })
+                : validResponse();
+        },
+        sleepImpl: async (delayMs) => delays.push(delayMs),
+    });
+
+    assert.deepEqual(delays, [4000]);
+});
+
+test('includes Gemini error response details after retries are exhausted', async () => {
+    let calls = 0;
     await assert.rejects(
         generateGeminiValuation(LOT, {
             apiKey: 'test-key',
-            fetchImpl: async () => responseWith({}, {
-                ok: false,
-                status: 429,
-                text: '{"error":"quota exceeded"}',
-            }),
+            maxRetries: 2,
+            fetchImpl: async () => {
+                calls += 1;
+                return responseWith({}, {
+                    ok: false,
+                    status: 429,
+                    text: '{"error":"quota exceeded"}',
+                });
+            },
+            sleepImpl: async () => {},
         }),
         /Gemini valuation failed \(429\).*quota exceeded/,
     );
+    assert.equal(calls, 3);
+});
+
+test('does not retry non-transient Gemini errors', async () => {
+    let calls = 0;
+    await assert.rejects(
+        generateGeminiValuation(LOT, {
+            apiKey: 'test-key',
+            fetchImpl: async () => {
+                calls += 1;
+                return responseWith({}, {
+                    ok: false,
+                    status: 400,
+                    text: 'bad request',
+                });
+            },
+            sleepImpl: async () => {},
+        }),
+        /Gemini valuation failed \(400\).*bad request/,
+    );
+    assert.equal(calls, 1);
 });
 
 test('rejects invalid valuation fields', async () => {

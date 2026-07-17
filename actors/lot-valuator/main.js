@@ -5,6 +5,8 @@ import { generateGeminiValuation } from './gemini-valuation.js';
 
 await Actor.init();
 
+const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+
 async function main() {
     const input = (await Actor.getInput()) ?? {};
 
@@ -21,6 +23,8 @@ async function main() {
     const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
     const geminiApiKey = process.env.GEMINI_API_KEY;
     const batchSize = input.batchSize ?? 10;
+    const requestDelayMs = Math.max(0, input.requestDelayMs ?? 3_500);
+    const maxGeminiRetries = Math.max(0, input.maxGeminiRetries ?? 3);
 
     if (!supabaseUrl) {
         throw new Error('SUPABASE_URL is missing.');
@@ -69,15 +73,26 @@ async function main() {
         return;
     }
 
+    console.log(`Gemini pacing: ${requestDelayMs}ms between lots, up to ${maxGeminiRetries} retries for rate limits and transient server errors.`);
     const results = [];
 
-    for (const lot of lots) {
+    for (const [index, lot] of lots.entries()) {
+        if (index > 0 && requestDelayMs > 0) {
+            await sleep(requestDelayMs);
+        }
+
         console.log(`Processing lot with Gemini: ${lot.id} - ${lot.title}`);
 
         try {
             const valuation = await generateGeminiValuation(lot, {
                 apiKey: geminiApiKey,
                 timeoutMs: input.valuationTimeoutMs ?? 60_000,
+                maxRetries: maxGeminiRetries,
+                onRetry: ({ attempt, maxRetries, status, delayMs }) => {
+                    console.warn(
+                        `Gemini returned ${status} for lot ${lot.id}. Waiting ${Math.ceil(delayMs / 1_000)}s before retry ${attempt}/${maxRetries}...`,
+                    );
+                },
             });
 
             console.log(`✓ Gemini valuation for lot ${lot.id}:`, valuation);

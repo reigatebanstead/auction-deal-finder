@@ -1,6 +1,8 @@
 const DEFAULT_MODEL = 'gemini-2.5-flash';
 const DEFAULT_ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta';
 const DEFAULT_TIMEOUT_MS = 60_000;
+const DEFAULT_MAX_RETRIES = 3;
+const DEFAULT_RETRY_DELAY_MS = 5_000;
 const MAX_ERROR_BODY_LENGTH = 500;
 
 const RESPONSE_SCHEMA = {
@@ -87,53 +89,88 @@ function validateValuation(valuation) {
     };
 }
 
+function parseRetryDelayMs(response, errorBody, attempt) {
+    const retryAfter = response.headers?.get?.('retry-after');
+    if (retryAfter) {
+        const seconds = Number(retryAfter);
+        if (Number.isFinite(seconds) && seconds >= 0) return Math.ceil(seconds * 1_000);
+
+        const retryDate = Date.parse(retryAfter);
+        if (Number.isFinite(retryDate)) return Math.max(0, retryDate - Date.now());
+    }
+
+    const bodyMatch = errorBody.match(/retry in\s+([0-9.]+)s/i);
+    if (bodyMatch) return Math.ceil(Number(bodyMatch[1]) * 1_000);
+
+    return DEFAULT_RETRY_DELAY_MS * (2 ** attempt);
+}
+
+function isRetryableStatus(status) {
+    return status === 429 || status === 500 || status === 502 || status === 503 || status === 504;
+}
+
 export async function generateGeminiValuation(lot, {
     apiKey = process.env.GEMINI_API_KEY,
     model = process.env.GEMINI_MODEL ?? DEFAULT_MODEL,
     endpoint = DEFAULT_ENDPOINT,
     timeoutMs = DEFAULT_TIMEOUT_MS,
+    maxRetries = DEFAULT_MAX_RETRIES,
     fetchImpl = fetch,
+    sleepImpl = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
+    onRetry = null,
 } = {}) {
     if (!apiKey) throw new Error('GEMINI_API_KEY is missing.');
 
     const url = `${endpoint.replace(/\/$/, '')}/models/${encodeURIComponent(model)}:generateContent`;
-    const response = await fetchImpl(url, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'x-goog-api-key': apiKey,
-        },
-        signal: AbortSignal.timeout(timeoutMs),
-        body: JSON.stringify({
-            contents: [{
-                role: 'user',
-                parts: [{ text: buildPrompt(lot) }],
-            }],
-            generationConfig: {
-                temperature: 0.2,
-                responseMimeType: 'application/json',
-                responseSchema: RESPONSE_SCHEMA,
+
+    for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
+        const response = await fetchImpl(url, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'x-goog-api-key': apiKey,
             },
-        }),
-    });
+            signal: AbortSignal.timeout(timeoutMs),
+            body: JSON.stringify({
+                contents: [{
+                    role: 'user',
+                    parts: [{ text: buildPrompt(lot) }],
+                }],
+                generationConfig: {
+                    temperature: 0.2,
+                    responseMimeType: 'application/json',
+                    responseSchema: RESPONSE_SCHEMA,
+                },
+            }),
+        });
 
-    if (!response.ok) {
-        const errorBody = await response.text();
-        throw new Error(
-            `Gemini valuation failed (${response.status}): ${errorBody.slice(0, MAX_ERROR_BODY_LENGTH)}`,
-        );
+        if (!response.ok) {
+            const errorBody = await response.text();
+            if (isRetryableStatus(response.status) && attempt < maxRetries) {
+                const delayMs = parseRetryDelayMs(response, errorBody, attempt);
+                onRetry?.({ attempt: attempt + 1, maxRetries, status: response.status, delayMs });
+                await sleepImpl(delayMs);
+                continue;
+            }
+
+            throw new Error(
+                `Gemini valuation failed (${response.status}): ${errorBody.slice(0, MAX_ERROR_BODY_LENGTH)}`,
+            );
+        }
+
+        const payload = await response.json();
+        const responseText = extractResponseText(payload);
+        if (!responseText) throw new Error('Gemini returned no valuation text.');
+
+        let parsed;
+        try {
+            parsed = JSON.parse(responseText);
+        } catch {
+            throw new Error('Gemini valuation response was not valid JSON.');
+        }
+
+        return validateValuation(parsed);
     }
 
-    const payload = await response.json();
-    const responseText = extractResponseText(payload);
-    if (!responseText) throw new Error('Gemini returned no valuation text.');
-
-    let parsed;
-    try {
-        parsed = JSON.parse(responseText);
-    } catch {
-        throw new Error('Gemini valuation response was not valid JSON.');
-    }
-
-    return validateValuation(parsed);
+    throw new Error('Gemini valuation retry loop ended unexpectedly.');
 }
