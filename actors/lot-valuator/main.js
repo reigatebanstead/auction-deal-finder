@@ -85,14 +85,14 @@ async function main() {
             results.push({
                 success: true,
                 id: lot.id,
-                estimated_resale: valuation.expectedResaleValue,
-                max_hammer_bid: valuation.maximumHammerPrice,
+                expected_resale: valuation.expectedResaleValue,
+                max_hammer: valuation.maximumHammerPrice,
                 expected_profit: valuation.expectedProfit,
-                confidence: valuation.confidence,
-                reasoning: valuation.reasoning,
+                valuation_confidence: valuation.confidence,
+                valuation_reasoning: valuation.reasoning,
                 condition_risks: valuation.conditionRisks,
                 valuation_status: 'complete',
-                valuated_at: new Date().toISOString(),
+                valued_at: new Date().toISOString(),
             });
         } catch (error) {
             const errorMessage = error instanceof Error ? error.message : String(error);
@@ -116,14 +116,14 @@ async function main() {
             let updatePayload;
             if (result.success) {
                 updatePayload = {
-                    estimated_resale: result.estimated_resale,
-                    max_hammer_bid: result.max_hammer_bid,
+                    expected_resale: result.expected_resale,
+                    max_hammer: result.max_hammer,
                     expected_profit: result.expected_profit,
-                    confidence: result.confidence,
-                    reasoning: result.reasoning,
+                    valuation_confidence: result.valuation_confidence,
+                    valuation_reasoning: result.valuation_reasoning,
                     condition_risks: result.condition_risks,
                     valuation_status: result.valuation_status,
-                    valuated_at: result.valuated_at,
+                    valued_at: result.valued_at,
                     valuation_error: null,
                 };
             } else {
