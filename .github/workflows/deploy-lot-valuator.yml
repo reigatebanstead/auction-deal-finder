@@ -44,6 +44,10 @@ jobs:
           APIFY_USER=$(curl -sf \
             -H "Authorization: Bearer $APIFY_TOKEN" \
             "https://api.apify.com/v2/users/me" | jq -r '.data.username')
+          if [ -z "$APIFY_USER" ] || [ "$APIFY_USER" = "null" ]; then
+            echo "::error::Apify authentication failed — token may be missing or invalid"
+            exit 1
+          fi
           echo "Authenticated as Apify user: $APIFY_USER"
         env:
           APIFY_TOKEN: ${{ secrets.APIFY_TOKEN }}
