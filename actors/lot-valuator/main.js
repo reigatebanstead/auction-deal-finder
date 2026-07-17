@@ -1,6 +1,7 @@
 import { Actor } from 'apify';
 import OpenAI from 'openai';
 import { fetchGeminiSoldComparables } from './gemini-comparables.js';
+import { runGeminiTestMode } from './gemini-test-mode.js';
 
 await Actor.init();
 
@@ -8,28 +9,14 @@ try {
     const input = (await Actor.getInput()) ?? {};
 
     if (input.testGeminiComparables === true) {
-        const query = input.comparableQuery?.trim();
-        if (!query) {
-            throw new Error(
-                'comparableQuery is required when testGeminiComparables is enabled.',
-            );
-        }
-
-        const evidence = await fetchGeminiSoldComparables({
-            query,
-            limit: input.comparableLimit ?? 10,
+        await runGeminiTestMode(input, {
+            pushData: (item) => Actor.pushData(item),
+            setValue: (key, value) => Actor.setValue(key, value),
+            exit: () => Actor.exit(),
+            fetchComparables: fetchGeminiSoldComparables,
         });
-
-        await Actor.setValue('OUTPUT', {
-            mode: 'gemini-ebay-sold-comparables-test',
-            ...evidence,
-            completedAt: new Date().toISOString(),
-        });
-
-        console.log(
-            `Found ${evidence.resultCount} normalized sold comparables for "${query}".`,
-        );
-        await Actor.exit();
+        // Actor.exit() is called within runGeminiTestMode; normal lot processing below
+        // is unreachable in production because exit() terminates the process.
     }
 
     const supabaseUrl = process.env.SUPABASE_URL;

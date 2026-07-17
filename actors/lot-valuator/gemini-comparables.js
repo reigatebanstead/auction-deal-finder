@@ -1,5 +1,6 @@
 const DEFAULT_MODEL = 'gemini-2.5-flash';
 const DEFAULT_ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta';
+const MAX_ERROR_LOG_LENGTH = 500;
 
 function extractJson(text) {
     const trimmed = text.trim();
@@ -230,6 +231,7 @@ export async function fetchGeminiSoldComparables({
     model = process.env.GEMINI_MODEL ?? DEFAULT_MODEL,
     endpoint = DEFAULT_ENDPOINT,
     fetchImpl = fetch,
+    timeoutMs = 120_000,
 }) {
     if (!query?.trim()) throw new Error('A non-empty comparable query is required.');
     if (!apiKey) throw new Error('GEMINI_API_KEY is missing.');
@@ -244,29 +246,64 @@ export async function fetchGeminiSoldComparables({
     }
 
     const url = `${endpoint.replace(/\/$/, '')}/models/${encodeURIComponent(model)}:generateContent`;
-    const response = await fetchImpl(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
-        body: JSON.stringify({
-            contents: [{
-                role: 'user',
-                parts: [{ text: buildPrompt(query.trim(), limit, activeLimit, marketWindowDays) }],
-            }],
-            tools: [{ google_search: {} }],
-            generationConfig: { temperature: 0.1 },
-        }),
-    });
+    const signal = AbortSignal.timeout(timeoutMs);
+
+    let response;
+    try {
+        response = await fetchImpl(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
+            signal,
+            body: JSON.stringify({
+                contents: [{
+                    role: 'user',
+                    parts: [{ text: buildPrompt(query.trim(), limit, activeLimit, marketWindowDays) }],
+                }],
+                tools: [{ google_search: {} }],
+                generationConfig: { temperature: 0.1 },
+            }),
+        });
+    } catch (fetchError) {
+        console.error('Gemini request error:', {
+            query: query.trim(),
+            model,
+            timeoutMs,
+            errorName: fetchError.name,
+            message: fetchError.message,
+        });
+        throw fetchError;
+    }
 
     if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Gemini comparable search failed (${response.status}): ${errorText}`);
+        const errorBody = await response.text();
+        console.error('Gemini non-2xx response:', {
+            query: query.trim(),
+            model,
+            status: response.status,
+            body: errorBody.slice(0, MAX_ERROR_LOG_LENGTH),
+        });
+        throw new Error(`Gemini comparable search failed (${response.status}): ${errorBody.slice(0, MAX_ERROR_LOG_LENGTH)}`);
     }
 
     const payload = await response.json();
     const responseText = extractResponseText(payload);
-    if (!responseText) throw new Error('Gemini returned no comparable evidence text.');
+    if (!responseText) {
+        console.error('Gemini returned no text:', { query: query.trim(), model });
+        throw new Error('Gemini returned no comparable evidence text.');
+    }
 
-    const parsed = extractJson(responseText);
+    let parsed;
+    try {
+        parsed = extractJson(responseText);
+    } catch (parseError) {
+        console.error('Gemini JSON parse error:', {
+            query: query.trim(),
+            model,
+            errorName: parseError.name,
+            message: parseError.message,
+        });
+        throw parseError;
+    }
     const rawSoldComparables = Array.isArray(parsed?.soldComparables)
         ? parsed.soldComparables
         : Array.isArray(parsed?.comparables) ? parsed.comparables : [];

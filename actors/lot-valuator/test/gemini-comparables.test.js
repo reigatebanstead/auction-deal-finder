@@ -192,4 +192,39 @@ test('fetches grounded Gemini market evidence with an injected fetch implementat
     assert.equal(evidence.sellThroughRate, 50);
     assert.equal(evidence.soldComparables[0].soldPrice, 175);
     assert.deepEqual(evidence.searchQueries, ['sold example ebay']);
+    assert.ok(Object.hasOwn(evidence, 'marketLiquidity'), 'marketLiquidity field must be present');
+});
+
+test('rejects with TimeoutError when the fetch exceeds timeoutMs', async () => {
+    const hangingFetch = (_url, options) =>
+        new Promise((_resolve, reject) => {
+            options.signal?.addEventListener('abort', () => reject(options.signal.reason));
+        });
+
+    await assert.rejects(
+        fetchGeminiSoldComparables({
+            query: 'slow item',
+            apiKey: 'test-key',
+            fetchImpl: hangingFetch,
+            timeoutMs: 10,
+        }),
+        (error) => error.name === 'TimeoutError',
+    );
+});
+
+test('throws when Gemini returns a non-OK status', async () => {
+    const errorFetch = async () => ({
+        ok: false,
+        status: 429,
+        text: async () => 'Too Many Requests',
+    });
+
+    await assert.rejects(
+        fetchGeminiSoldComparables({
+            query: 'rate limited item',
+            apiKey: 'test-key',
+            fetchImpl: errorFetch,
+        }),
+        /429/,
+    );
 });
