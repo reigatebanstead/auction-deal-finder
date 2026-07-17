@@ -13,19 +13,20 @@
       "default": 10
     },
     "testGeminiComparables": {
-      "title": "Test Gemini eBay Sold Comparables",
-      "description": "Run only the Gemini-backed eBay sold-comparables evidence test. This does not call OpenAI or read/write Supabase.",
+      "title": "Test Gemini comparables only",
+      "description": "Run the bounded Gemini/eBay comparable test path before normal batch processing. Results are written to the default dataset and OUTPUT; Supabase and OpenAI are not used.",
       "type": "boolean",
       "default": false
     },
     "comparableQuery": {
-      "title": "Comparable Search Query",
-      "description": "Item description to search for in sold eBay evidence test mode.",
-      "type": "string"
+      "title": "Comparable query",
+      "description": "Required when testGeminiComparables is true. Example: Royal Doulton stoneware vase signed 1920s.",
+      "type": "string",
+      "editor": "textfield"
     },
     "comparableLimit": {
-      "title": "Comparable Result Limit",
-      "description": "Maximum number of normalized sold comparables to return.",
+      "title": "Comparable limit",
+      "description": "Maximum number of normalized sold and active eBay comparables requested in test mode.",
       "type": "integer",
       "minimum": 1,
       "maximum": 25,
