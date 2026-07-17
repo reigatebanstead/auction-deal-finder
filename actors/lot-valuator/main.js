@@ -21,6 +21,8 @@ try {
             evidence = await fetchGeminiSoldComparables({
                 query,
                 limit: input.comparableLimit ?? 10,
+                // Use a conservative 60 s timeout so the Actor exits well within
+                // Apify's 300 s run limit even if the Gemini API is slow.
                 timeoutMs: 60_000,
             });
         } catch (error) {
