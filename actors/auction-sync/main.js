@@ -3,7 +3,12 @@ import { Actor } from 'apify';
 await Actor.init();
 
 try {
-    const datasetId = 'uwwAn6WkijBjQgZVj';
+    const input = (await Actor.getInput()) ?? {};
+const datasetId = input.datasetId;
+
+if (!datasetId) {
+    throw new Error('datasetId is missing from the Actor input.');
+}
     const supabaseUrl = process.env.SUPABASE_URL;
     const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
