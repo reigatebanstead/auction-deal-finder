@@ -198,7 +198,11 @@ test('fetches grounded Gemini market evidence with an injected fetch implementat
 test('rejects with TimeoutError when the fetch exceeds timeoutMs', async () => {
     const hangingFetch = (_url, options) =>
         new Promise((_resolve, reject) => {
-            options.signal?.addEventListener('abort', () => reject(options.signal.reason));
+            const keepAlive = setTimeout(() => {}, 1_000);
+            options.signal?.addEventListener('abort', () => {
+                clearTimeout(keepAlive);
+                reject(options.signal.reason);
+            }, { once: true });
         });
 
     await assert.rejects(
