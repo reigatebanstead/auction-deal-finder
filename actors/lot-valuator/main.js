@@ -238,5 +238,5 @@ try {
     });
     throw error;
 } finally {
-    await Actor.exit();
+    await Actor.exit({ timeoutSecs: 5, exit: true });
 }

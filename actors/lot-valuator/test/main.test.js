@@ -143,12 +143,15 @@ test('runGeminiTestMode dependencies do not include exit', async () => {
     await assert.doesNotReject(runGeminiTestMode({ comparableQuery: 'test item' }, state.deps));
 });
 
-test('main has one Actor.exit cleanup and explicitly returns after test mode', async () => {
+test('main has one bounded Actor.exit cleanup and explicitly returns after test mode', async () => {
     const source = await readFile(new URL('../main.js', import.meta.url), 'utf8');
     assert.equal((source.match(/Actor\.exit\s*\(/g) ?? []).length, 1);
     assert.match(
         source,
         /if \(input\.testGeminiComparables === true\)[\s\S]*?await runGeminiTestMode\([\s\S]*?\);\s*return;/,
     );
-    assert.match(source, /finally\s*{\s*await Actor\.exit\(\);\s*}/);
+    assert.match(
+        source,
+        /finally\s*{\s*await Actor\.exit\(\{\s*timeoutSecs:\s*5,\s*exit:\s*true\s*\}\);\s*}/,
+    );
 });
