@@ -35,6 +35,8 @@ jobs:
 
       # ── Post-deployment: verify input schema ────────────────────────────────
       - name: Verify deployed input schema
+        env:
+          APIFY_TOKEN: ${{ secrets.APIFY_TOKEN }}
         run: |
           echo "Checking deployed input schema for required fields..."
           SCHEMA=".actor/INPUT_SCHEMA.json"
