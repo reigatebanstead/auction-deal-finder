@@ -1,0 +1,16 @@
+{
+  "title": "Lot Valuator Input",
+  "description": "Configuration for the Lot Valuator actor",
+  "type": "object",
+  "schemaVersion": 1,
+  "properties": {
+    "batchSize": {
+      "title": "Batch Size",
+      "description": "Maximum number of pending lots to valuate per run (default: 10)",
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 100,
+      "default": 10
+    }
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "actorSpecification": 1,
+  "name": "lot-valuator",
+  "title": "Lot Valuator",
+  "version": "1.0.0",
+  "input": "./INPUT_SCHEMA.json"
+}

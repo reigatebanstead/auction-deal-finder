@@ -1,0 +1,12 @@
+{
+  "name": "lot-valuator",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "start": "node main.js"
+  },
+  "dependencies": {
+    "apify": "^3.4.0",
+    "openai": "^4.52.0"
+  }
+}
