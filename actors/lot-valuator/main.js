@@ -1,6 +1,7 @@
 import { Actor } from 'apify';
 import OpenAI from 'openai';
 import { fetchGeminiSoldComparables } from './gemini-comparables.js';
+import { runGeminiTestMode } from './gemini-test-mode.js';
 
 await Actor.init();
 
@@ -8,49 +9,14 @@ try {
     const input = (await Actor.getInput()) ?? {};
 
     if (input.testGeminiComparables === true) {
-        const query = input.comparableQuery?.trim();
-        if (!query) {
-            throw new Error(
-                'comparableQuery is required when testGeminiComparables is enabled.',
-            );
-        }
-
-        const errors = [];
-        let evidence;
-        try {
-            evidence = await fetchGeminiSoldComparables({
-                query,
-                limit: input.comparableLimit ?? 10,
-                // Use a conservative 60 s timeout so the Actor exits well within
-                // Apify's 300 s run limit even if the Gemini API is slow.
-                timeoutMs: 60_000,
-            });
-        } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            console.error('Gemini comparable search failed:', message);
-            errors.push(message);
-        }
-
-        const result = {
-            mode: 'gemini-ebay-sold-comparables-test',
-            query,
-            soldCount: evidence?.soldCount ?? 0,
-            activeCount: evidence?.activeCount ?? 0,
-            sellThroughRate: evidence?.sellThroughRate ?? null,
-            liquidityAssessment: evidence?.marketLiquidity ?? 'Unknown',
-            soldListings: evidence?.soldComparables ?? [],
-            activeListings: evidence?.activeListings ?? [],
-            errors,
-            completedAt: new Date().toISOString(),
-        };
-
-        await Actor.pushData(result);
-        await Actor.setValue('OUTPUT', result);
-
-        console.log(
-            `Found ${result.soldCount} sold and ${result.activeCount} active listings for "${query}".`,
-        );
-        await Actor.exit();
+        await runGeminiTestMode(input, {
+            pushData: (item) => Actor.pushData(item),
+            setValue: (key, value) => Actor.setValue(key, value),
+            exit: () => Actor.exit(),
+            fetchComparables: fetchGeminiSoldComparables,
+        });
+        // Actor.exit() is called within runGeminiTestMode; normal lot processing below
+        // is unreachable in production because exit() terminates the process.
     }
 
     const supabaseUrl = process.env.SUPABASE_URL;
