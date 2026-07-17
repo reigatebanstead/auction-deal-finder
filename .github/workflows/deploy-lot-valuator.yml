@@ -84,17 +84,27 @@ jobs:
         run: |
           echo "Starting synchronous smoke-test run..."
 
-          # The documented synchronous endpoint passes this JSON body directly as
-          # the Actor INPUT and returns the default dataset items. This avoids the
-          # previous incorrect run-status polling URL and proves test mode was used.
-          curl --silent --show-error --fail-with-body \
-            --max-time 240 \
+          HTTP_STATUS=$(curl --silent --show-error \
+            --max-time 290 \
             -X POST \
             -H "Authorization: Bearer $APIFY_TOKEN" \
-            -H "Content-Type: application/json" \
-            -d '{"testGeminiComparables":true,"comparableQuery":"Royal Doulton stoneware vase signed 1920s","comparableLimit":10}' \
-            "https://api.apify.com/v2/actors/valorous_ocarina~auction-deal-finder/run-sync-get-dataset-items?timeout=180&format=json&clean=true" \
-            -o /tmp/smoke-items.json
+            -H "Content-Type: application/json; charset=utf-8" \
+            -d '{"testGeminiComparables":true,"comparableQuery":"Royal Doulton stoneware vase signed 1920s","comparableLimit":10,"comparableTimeoutMs":60000}' \
+            "https://api.apify.com/v2/acts/valorous_ocarina~auction-deal-finder/run-sync-get-dataset-items?timeout=240&format=json&clean=true" \
+            -o /tmp/smoke-items.json \
+            -w '%{http_code}')
+
+          if [ "$HTTP_STATUS" != "200" ] && [ "$HTTP_STATUS" != "201" ]; then
+            echo "::error::Apify smoke-test request failed with HTTP $HTTP_STATUS"
+            cat /tmp/smoke-items.json
+            exit 1
+          fi
+
+          if ! jq empty /tmp/smoke-items.json; then
+            echo "::error::Apify smoke-test response was not valid JSON"
+            cat /tmp/smoke-items.json
+            exit 1
+          fi
 
           ITEM_COUNT=$(jq 'length' /tmp/smoke-items.json)
           echo "Dataset items returned: $ITEM_COUNT"
