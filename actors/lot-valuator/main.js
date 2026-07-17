@@ -1,10 +1,37 @@
 import { Actor } from 'apify';
 import OpenAI from 'openai';
+import { fetchGeminiSoldComparables } from './gemini-comparables.js';
 
 await Actor.init();
 
 try {
     const input = (await Actor.getInput()) ?? {};
+
+    if (input.testGeminiComparables === true) {
+        const query = input.comparableQuery?.trim();
+        if (!query) {
+            throw new Error(
+                'comparableQuery is required when testGeminiComparables is enabled.',
+            );
+        }
+
+        const evidence = await fetchGeminiSoldComparables({
+            query,
+            limit: input.comparableLimit ?? 10,
+        });
+
+        await Actor.setValue('OUTPUT', {
+            mode: 'gemini-ebay-sold-comparables-test',
+            ...evidence,
+            completedAt: new Date().toISOString(),
+        });
+
+        console.log(
+            `Found ${evidence.resultCount} normalized sold comparables for "${query}".`,
+        );
+        await Actor.exit();
+    }
+
     const supabaseUrl = process.env.SUPABASE_URL;
     const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
     const openaiApiKey = process.env.OPENAI_API_KEY;
@@ -58,7 +85,7 @@ try {
             completedAt: new Date().toISOString(),
         });
         console.log('No pending lots to valuate.');
-        process.exit(0);
+        await Actor.exit();
     }
 
     const results = [];

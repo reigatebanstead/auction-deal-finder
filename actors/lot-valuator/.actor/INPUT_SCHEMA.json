@@ -11,6 +11,25 @@
       "minimum": 1,
       "maximum": 100,
       "default": 10
+    },
+    "testGeminiComparables": {
+      "title": "Test Gemini eBay Sold Comparables",
+      "description": "Run only the Gemini-backed eBay sold-comparables evidence test. This does not call OpenAI or read/write Supabase.",
+      "type": "boolean",
+      "default": false
+    },
+    "comparableQuery": {
+      "title": "Comparable Search Query",
+      "description": "Item description to search for in sold eBay evidence test mode.",
+      "type": "string"
+    },
+    "comparableLimit": {
+      "title": "Comparable Result Limit",
+      "description": "Maximum number of normalized sold comparables to return.",
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 25,
+      "default": 10
     }
   }
 }
