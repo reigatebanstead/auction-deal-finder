@@ -1,0 +1,16 @@
+{
+  "title": "Auction import",
+  "type": "object",
+  "schemaVersion": 1,
+  "properties": {
+    "datasetId": {
+      "title": "Source dataset",
+      "type": "string",
+      "description": "Select the Apify dataset containing the auction lots.",
+      "editor": "resourcePicker",
+      "resourceType": "dataset",
+      "resourcePermissions": ["READ"]
+    }
+  },
+  "required": ["datasetId"]
+}
