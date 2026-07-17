@@ -5,18 +5,16 @@ import { runGeminiTestMode } from './gemini-test-mode.js';
 
 await Actor.init();
 
-try {
+async function main() {
     const input = (await Actor.getInput()) ?? {};
 
     if (input.testGeminiComparables === true) {
         await runGeminiTestMode(input, {
             pushData: (item) => Actor.pushData(item),
             setValue: (key, value) => Actor.setValue(key, value),
-            exit: () => Actor.exit(),
             fetchComparables: fetchGeminiSoldComparables,
         });
-        // Actor.exit() is called within runGeminiTestMode; normal lot processing below
-        // is unreachable in production because exit() terminates the process.
+        return;
     }
 
     const supabaseUrl = process.env.SUPABASE_URL;
@@ -72,7 +70,7 @@ try {
             completedAt: new Date().toISOString(),
         });
         console.log('No pending lots to valuate.');
-        await Actor.exit();
+        return;
     }
 
     const results = [];
@@ -228,6 +226,10 @@ Be realistic and conservative in your estimates. Only return valid JSON.`;
     console.log(
         `\nSuccessfully valuated ${successCount} lots with ${failureCount} failures.`,
     );
+}
+
+try {
+    await main();
 } catch (error) {
     console.error('VALUATION FAILED:', error);
     await Actor.setValue('ERROR', {
@@ -235,4 +237,6 @@ Be realistic and conservative in your estimates. Only return valid JSON.`;
         stack: error instanceof Error ? error.stack : null,
     });
     throw error;
+} finally {
+    await Actor.exit();
 }
