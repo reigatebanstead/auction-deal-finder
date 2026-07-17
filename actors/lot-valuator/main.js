@@ -28,16 +28,17 @@ try {
 
     // Fetch pending lots from Supabase
     console.log(`Fetching up to ${batchSize} pending lots from Supabase...`);
-    const pendingLotsResponse = await fetch(
-        `${supabaseUrl.replace(/\/$/, '')}/rest/v1/lots?valuation_status=eq.pending&limit=${batchSize}`,
-        {
-            method: 'GET',
-            headers: {
-                apikey: supabaseKey,
-                Authorization: `Bearer ${supabaseKey}`,
-            },
+    const pendingLotsUrl = new URL(`${supabaseUrl.replace(/\/$/, '')}/rest/v1/lots`);
+    pendingLotsUrl.searchParams.append('valuation_status', 'eq.pending');
+    pendingLotsUrl.searchParams.append('limit', batchSize.toString());
+
+    const pendingLotsResponse = await fetch(pendingLotsUrl.toString(), {
+        method: 'GET',
+        headers: {
+            apikey: supabaseKey,
+            Authorization: `Bearer ${supabaseKey}`,
         },
-    );
+    });
 
     if (!pendingLotsResponse.ok) {
         const errorText = await pendingLotsResponse.text();
@@ -52,13 +53,15 @@ try {
     if (lots.length === 0) {
         await Actor.setValue('OUTPUT', {
             valuationsProcessed: 0,
+            failuresProcessed: 0,
+            totalProcessed: 0,
             completedAt: new Date().toISOString(),
         });
         console.log('No pending lots to valuate.');
         process.exit(0);
     }
 
-    const valuations = [];
+    const results = [];
 
     for (const lot of lots) {
         console.log(`Processing lot: ${lot.id} - ${lot.title}`);
@@ -80,7 +83,7 @@ Provide your analysis in the following JSON format:
   "expectedProfit": <number in GBP>,
   "confidence": "High" | "Medium" | "Low",
   "reasoning": "<brief explanation of valuation>",
-  "conditionRisks": "<identified condition or provenance risks, or 'None identified'>"
+  "conditionRisks": ["<risk 1>", "<risk 2>", "None identified"]
 }
 
 Be realistic and conservative in your estimates. Only return valid JSON.`;
@@ -95,17 +98,11 @@ Be realistic and conservative in your estimates. Only return valid JSON.`;
                     },
                 ],
                 temperature: 0.7,
+                response_format: { type: 'json_object' },
             });
 
             const responseText = completion.choices[0].message.content.trim();
-
-            // Extract JSON from the response
-            const jsonMatch = responseText.match(/\{[\s\S]*\}/);
-            if (!jsonMatch) {
-                throw new Error('No JSON found in OpenAI response');
-            }
-
-            const valuation = JSON.parse(jsonMatch[0]);
+            const valuation = JSON.parse(responseText);
 
             // Validate required fields
             const requiredFields = [
@@ -122,9 +119,15 @@ Be realistic and conservative in your estimates. Only return valid JSON.`;
                 }
             }
 
+            // Ensure conditionRisks is an array
+            if (!Array.isArray(valuation.conditionRisks)) {
+                throw new Error('conditionRisks must be an array');
+            }
+
             console.log(`✓ Valuation for lot ${lot.id}:`, valuation);
 
-            valuations.push({
+            results.push({
+                success: true,
                 id: lot.id,
                 estimated_resale: valuation.expectedResaleValue,
                 max_hammer_bid: valuation.maximumHammerPrice,
@@ -136,47 +139,81 @@ Be realistic and conservative in your estimates. Only return valid JSON.`;
                 valuated_at: new Date().toISOString(),
             });
         } catch (error) {
-            console.error(`✗ Failed to valuate lot ${lot.id}:`, error.message);
-            // Continue with next lot instead of failing entirely
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            console.error(`✗ Failed to valuate lot ${lot.id}:`, errorMessage);
+            results.push({
+                success: false,
+                id: lot.id,
+                valuation_status: 'failed',
+                valuation_error: errorMessage,
+            });
         }
     }
 
     // Update lots in Supabase
-    if (valuations.length > 0) {
-        console.log(`\nUpdating ${valuations.length} lots in Supabase...`);
+    if (results.length > 0) {
+        console.log(`\nUpdating ${results.length} lots in Supabase...`);
 
-        for (const valuation of valuations) {
-            const updateResponse = await fetch(
-                `${supabaseUrl.replace(/\/$/, '')}/rest/v1/lots?id=eq.${valuation.id}`,
-                {
-                    method: 'PATCH',
-                    headers: {
-                        apikey: supabaseKey,
-                        Authorization: `Bearer ${supabaseKey}`,
-                        'Content-Type': 'application/json',
-                        Prefer: 'return=minimal',
-                    },
-                    body: JSON.stringify(valuation),
+        for (const result of results) {
+            const updateUrl = new URL(`${supabaseUrl.replace(/\/$/, '')}/rest/v1/lots`);
+            updateUrl.searchParams.append('id', `eq.${result.id}`);
+
+            // Prepare update payload based on success/failure
+            let updatePayload;
+            if (result.success) {
+                updatePayload = {
+                    estimated_resale: result.estimated_resale,
+                    max_hammer_bid: result.max_hammer_bid,
+                    expected_profit: result.expected_profit,
+                    confidence: result.confidence,
+                    reasoning: result.reasoning,
+                    condition_risks: result.condition_risks,
+                    valuation_status: result.valuation_status,
+                    valuated_at: result.valuated_at,
+                    valuation_error: null,
+                };
+            } else {
+                updatePayload = {
+                    valuation_status: result.valuation_status,
+                    valuation_error: result.valuation_error,
+                };
+            }
+
+            const updateResponse = await fetch(updateUrl.toString(), {
+                method: 'PATCH',
+                headers: {
+                    apikey: supabaseKey,
+                    Authorization: `Bearer ${supabaseKey}`,
+                    'Content-Type': 'application/json',
+                    Prefer: 'return=minimal',
                 },
-            );
+                body: JSON.stringify(updatePayload),
+            });
 
             if (!updateResponse.ok) {
                 const errorText = await updateResponse.text();
                 console.error(
-                    `Failed to update lot ${valuation.id} (${updateResponse.status}): ${errorText}`,
+                    `Failed to update lot ${result.id} (${updateResponse.status}): ${errorText}`,
                 );
             } else {
-                console.log(`✓ Updated lot ${valuation.id}`);
+                console.log(`✓ Updated lot ${result.id}`);
             }
         }
     }
 
+    const successCount = results.filter((r) => r.success).length;
+    const failureCount = results.length - successCount;
+
     await Actor.setValue('OUTPUT', {
-        valuationsProcessed: valuations.length,
+        valuationsProcessed: successCount,
+        failuresProcessed: failureCount,
+        totalProcessed: results.length,
         completedAt: new Date().toISOString(),
     });
 
-    console.log(`\nSuccessfully valuated and updated ${valuations.length} lots.`);
+    console.log(
+        `\nSuccessfully valuated ${successCount} lots with ${failureCount} failures.`,
+    );
 } catch (error) {
     console.error('VALUATION FAILED:', error);
     await Actor.setValue('ERROR', {
