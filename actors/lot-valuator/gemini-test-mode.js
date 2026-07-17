@@ -1,5 +1,7 @@
 import { fetchGeminiSoldComparables as defaultFetchComparables } from './gemini-comparables.js';
 
+const DEFAULT_TIMEOUT_MS = 60_000;
+
 function buildSuccessResult(query, evidence) {
     return {
         mode: 'gemini-ebay-sold-comparables-test',
@@ -30,26 +32,29 @@ function buildFailureResult(query, error) {
     };
 }
 
+function createTimeoutError(timeoutMs) {
+    const error = new Error(`Gemini comparable search timed out after ${timeoutMs} ms.`);
+    error.name = 'TimeoutError';
+    return error;
+}
+
 /**
- * Runs the Gemini comparable test mode: executes exactly one Gemini search, writes one
- * structured result to the dataset and OUTPUT key, then calls exit(). All external
- * dependencies (storage writes, process exit, and the Gemini fetch) are injected so the
- * function is testable without a real Apify environment or API key.
+ * Runs the Gemini comparable test mode: executes exactly one Gemini search and writes one
+ * structured result to the dataset and OUTPUT key. Actor lifecycle cleanup is owned by main.js.
  *
- * @param {object} input - Actor input (comparableQuery, comparableLimit).
+ * @param {object} input - Actor input (comparableQuery, comparableLimit, comparableTimeoutMs).
  * @param {object} deps - Injected dependencies.
  * @param {function} deps.pushData - Writes one item to the default dataset.
  * @param {function} deps.setValue - Writes a value to a named key-value store key.
- * @param {function} deps.exit - Cleanly exits the Actor process.
  * @param {function} [deps.fetchComparables] - Gemini search implementation (defaults to the real one).
  */
 export async function runGeminiTestMode(input, {
     pushData,
     setValue,
-    exit,
     fetchComparables = defaultFetchComparables,
 }) {
     const query = input.comparableQuery?.trim() ?? '';
+    const timeoutMs = input.comparableTimeoutMs ?? DEFAULT_TIMEOUT_MS;
 
     let result;
     if (!query) {
@@ -57,14 +62,21 @@ export async function runGeminiTestMode(input, {
         console.error(`[gemini-test-mode] Missing query — ${error.name}: ${error.message}`);
         result = buildFailureResult('', error);
     } else {
+        let timeoutTimer;
         try {
-            const evidence = await fetchComparables({
-                query,
-                limit: input.comparableLimit ?? 10,
-                // Use a conservative 60 s timeout so the Actor exits well within
-                // Apify's 300 s run limit even if the Gemini API is slow.
-                timeoutMs: 60_000,
+            const timeoutPromise = new Promise((_, reject) => {
+                timeoutTimer = setTimeout(() => reject(createTimeoutError(timeoutMs)), timeoutMs);
             });
+
+            const evidence = await Promise.race([
+                fetchComparables({
+                    query,
+                    limit: input.comparableLimit ?? 10,
+                    timeoutMs,
+                }),
+                timeoutPromise,
+            ]);
+
             result = buildSuccessResult(query, evidence);
             console.log(
                 `[gemini-test-mode] Found ${result.soldCount} sold and ${result.activeCount} active listings for "${query}".`,
@@ -74,14 +86,14 @@ export async function runGeminiTestMode(input, {
                 `[gemini-test-mode] Search failed for "${query}" — ${error.name}: ${error.message}`,
             );
             result = buildFailureResult(query, error);
+        } finally {
+            if (timeoutTimer !== undefined) {
+                clearTimeout(timeoutTimer);
+            }
         }
     }
 
-    try {
-        await pushData(result);
-        await setValue('OUTPUT', result);
-    } finally {
-        // Always exit cleanly so no open handles keep the Actor run alive.
-        await exit();
-    }
+    await pushData(result);
+    await setValue('OUTPUT', result);
+    return result;
 }
