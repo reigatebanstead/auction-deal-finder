@@ -27,6 +27,27 @@ jobs:
       - name: Install Apify CLI
         run: npm install -g apify-cli
 
+      # ── Authenticate ────────────────────────────────────────────────────────
+      # apify push reads credentials from ~/.apify/auth.json, not from the
+      # APIFY_TOKEN env var alone.  Calling `apify login --token` explicitly
+      # writes that file so every subsequent CLI command is authenticated.
+      - name: Login to Apify
+        run: apify login --token "$APIFY_TOKEN"
+        env:
+          APIFY_TOKEN: ${{ secrets.APIFY_TOKEN }}
+
+      # ── Diagnostic: confirm authentication before deploying ─────────────────
+      # This step fails if the token is invalid or not available.
+      # It prints the username, NOT the token.
+      - name: Verify Apify authentication
+        run: |
+          APIFY_USER=$(curl -sf \
+            -H "Authorization: Bearer $APIFY_TOKEN" \
+            "https://api.apify.com/v2/users/me" | jq -r '.data.username')
+          echo "Authenticated as Apify user: $APIFY_USER"
+        env:
+          APIFY_TOKEN: ${{ secrets.APIFY_TOKEN }}
+
       # ── Deploy ──────────────────────────────────────────────────────────────
       - name: Deploy to Apify
         run: apify push valorous_ocarina/auction-deal-finder
