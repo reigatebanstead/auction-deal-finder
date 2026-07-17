@@ -1,0 +1,17 @@
+{
+  "title": "Auction Sync Input",
+  "description": "Configuration for the Auction Sync actor",
+  "type": "object",
+  "schemaVersion": 1,
+  "properties": {
+    "datasetId": {
+      "title": "Dataset ID",
+      "description": "The Apify dataset containing auction items to sync",
+      "type": "string",
+      "editor": "resourcePicker",
+      "resourceType": "dataset",
+      "resourcePermissions": ["READ"]
+    }
+  },
+  "required": ["datasetId"]
+}

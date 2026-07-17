@@ -1,0 +1,7 @@
+{
+  "actorSpecification": 1,
+  "name": "auction-sync",
+  "title": "Auction Sync",
+  "version": "1.0.0",
+  "input": "./INPUT_SCHEMA.json"
+}
