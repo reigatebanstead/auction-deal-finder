@@ -29,7 +29,7 @@ jobs:
 
       # ── Deploy ──────────────────────────────────────────────────────────────
       - name: Deploy to Apify
-        run: apify push --actor-id valorous_ocarina/auction-deal-finder --no-prompt
+        run: apify push valorous_ocarina/auction-deal-finder
         env:
           APIFY_TOKEN: ${{ secrets.APIFY_TOKEN }}
 
